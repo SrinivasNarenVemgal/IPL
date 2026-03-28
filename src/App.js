@@ -1,5 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 
+// ─── SUPABASE CONFIG ──────────────────────────────────────────────
+const SUPA_URL = "https://xwvqwzqdabvkypelutot.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh3dnF3enFkYWJ2a3lwZWx1dG90Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2ODk1NDUsImV4cCI6MjA5MDI2NTU0NX0.qA4Cyr6k50bBw7rfWf3my9mHYrKMFr4f0oHlfNIyKgw";
+const supabase = createClient(SUPA_URL, SUPA_KEY);
+
+// ─── MEMBERS ─────────────────────────────────────────────────────
 const ADMIN_NAME = "VSN";
 const MEMBERS = [
   { name:"VSN",      pin:"1804" },
@@ -45,25 +52,32 @@ const SC = {toss:1,tossDecision:1,winner:2,topScorer:3,topWicket:3,manOfMatch:3,
 const MAX_PTS = Object.values(SC).reduce((a,b)=>a+b,0);
 
 const STEPS = [
-  {field:"toss",         type:"team",    label:"Who wins the TOSS? 🎯",                         pts:1},
-  {field:"tossDecision", type:"batbowl", label:"What will they choose? 🏏",                     pts:1},
-  {field:"winner",       type:"team",    label:"Who wins the MATCH? 🏆",                        pts:2},
-  {field:"pp1",          type:"pprange", label:"__T1__ Powerplay score (6 overs)? ⚡",          pts:2},
-  {field:"pp2",          type:"pprange", label:"__T2__ Powerplay score (6 overs)? ⚡",          pts:2},
-  {field:"topScorer",    type:"player",  label:"Who scores the MOST RUNS? 🏃",                  pts:3},
-  {field:"topWicket",    type:"player",  label:"Who takes the MOST WICKETS? 🎳",                pts:3},
-  {field:"manOfMatch",   type:"player",  label:"Who is MAN OF THE MATCH? ⭐",                   pts:3},
-  {field:"sixHitter",    type:"player",  label:"Who hits the MOST SIXES? 💥",                   pts:2},
+  {field:"toss",         type:"team",    label:"Who wins the TOSS? 🎯",                  pts:1},
+  {field:"tossDecision", type:"batbowl", label:"What will they choose? 🏏",              pts:1},
+  {field:"winner",       type:"team",    label:"Who wins the MATCH? 🏆",                 pts:2},
+  {field:"pp1",          type:"pprange", label:"__T1__ Powerplay score (6 overs)? ⚡",   pts:2},
+  {field:"pp2",          type:"pprange", label:"__T2__ Powerplay score (6 overs)? ⚡",   pts:2},
+  {field:"topScorer",    type:"player",  label:"Who scores the MOST RUNS? 🏃",           pts:3},
+  {field:"topWicket",    type:"player",  label:"Who takes the MOST WICKETS? 🎳",         pts:3},
+  {field:"manOfMatch",   type:"player",  label:"Who is MAN OF THE MATCH? ⭐",            pts:3},
+  {field:"sixHitter",    type:"player",  label:"Who hits the MOST SIXES? 💥",            pts:2},
 ];
 
 const SCREENS = {LAND:"LAND",PIN:"PIN",MATCHES:"MATCHES",CHAT:"CHAT",ADMIN:"ADMIN",RESULTS:"RESULTS",COMPARE:"COMPARE"};
-const EMOJIS = ["🧑","👦","👩","🧔","👱","🙋","🤵","👸","🦸","🧑‍💻"];
-const emo = n=>{let h=0;for(let c of(n||""))h+=c.charCodeAt(0);return EMOJIS[h%EMOJIS.length];};
-const isLocked = m=>m?.lockTime?new Date()>=new Date(m.lockTime):false;
-const lsGet = k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
-const lsSet = (k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
-const lsDel = k=>{try{localStorage.removeItem(k);}catch{}};
+const EMOJIS  = ["🧑","👦","👩","🧔","👱","🙋","🤵","👸","🦸","🧑‍💻"];
+const emo     = n=>{let h=0;for(let c of(n||""))h+=c.charCodeAt(0);return EMOJIS[h%EMOJIS.length];};
+const isLocked= m=>m?.lockTime?new Date()>=new Date(m.lockTime):false;
 const nowTime = ()=>new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
+
+// ─── Supabase helpers ─────────────────────────────────────────────
+const dbGet = async (key) => {
+  const {data} = await supabase.from("app_data").select("value").eq("key",key).single();
+  return data?.value ?? null;
+};
+const dbSet = async (key, value) => {
+  await supabase.from("app_data").upsert({key, value}, {onConflict:"key"});
+};
+
 const Ball = ({name,size=34})=>{
   const t=tObj(name);if(!t)return null;
   return <div style={{width:size,height:size,borderRadius:"50%",background:t.color,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:size*0.25,border:`2px solid ${t.accent}`,flexShrink:0}}>{t.short}</div>;
@@ -87,8 +101,9 @@ export default function App(){
   const [adminMatch,setAdminMatch]= useState(null);
   const [toast,     setToast]     = useState(null);
   const [copied,    setCopied]    = useState(false);
+  const [loading,   setLoading]   = useState(true);
 
-  // ── Chat state ───────────────────────────────────────────────────
+  // Chat state
   const [msgs,      setMsgs]      = useState([]);
   const [step,      setStep]      = useState(0);
   const [typing,    setTyping]    = useState(false);
@@ -96,22 +111,46 @@ export default function App(){
   const [search,    setSearch]    = useState("");
   const bottomRef = useRef(null);
 
+  // ── Load ALL data from Supabase on startup ──────────────────────
   useEffect(()=>{
-    const ma=lsGet("i26_ma");if(ma)setMatches(ma);
-    const pr=lsGet("i26_pr");if(pr)setPreds(pr);
-    const re=lsGet("i26_re");if(re)setResults(re);
-    const sc=lsGet("i26_sc");if(sc)setScores(sc);
-    const mc=lsGet("i26_mc");if(mc)setMc(mc);
+    const loadAll = async () => {
+      setLoading(true);
+      try {
+        const [ma,pr,re,sc,mc_] = await Promise.all([
+          dbGet("matches"), dbGet("preds"), dbGet("results"),
+          dbGet("scores"),  dbGet("mc"),
+        ]);
+        if(ma) setMatches(ma);
+        if(pr) setPreds(pr);
+        if(re) setResults(re);
+        if(sc) setScores(sc);
+        if(mc_) setMc(mc_);
+      } catch(e){ console.log("Load error",e); }
+      setLoading(false);
+    };
+    loadAll();
   },[]);
 
+  // ── Real-time sync — listen for changes ─────────────────────────
   useEffect(()=>{
-    bottomRef.current?.scrollIntoView({behavior:"smooth"});
-  },[msgs,typing]);
+    const channel = supabase.channel("app_data_changes")
+      .on("postgres_changes",{event:"*",schema:"public",table:"app_data"},(payload)=>{
+        const {key,value} = payload.new || {};
+        if(key==="matches") setMatches(value||[]);
+        if(key==="preds")   setPreds(value||{});
+        if(key==="results") setResults(value||{});
+        if(key==="scores")  setScores(value||{});
+        if(key==="mc")      setMc(value||1);
+      })
+      .subscribe();
+    return ()=>supabase.removeChannel(channel);
+  },[]);
 
-  const sv  = (k,v)=>lsSet(k,v);
-  const tip = (msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),2500);};
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[msgs,typing]);
 
-  // ── Bot sends a message after a short delay ──────────────────────
+  const tip = (msg,type="ok")=>{ setToast({msg,type}); setTimeout(()=>setToast(null),2500); };
+
+  // ── Bot message ────────────────────────────────────────────────
   const botMsg = (text, delay=650, onDone) => {
     setTyping(true);
     setTimeout(()=>{
@@ -121,18 +160,15 @@ export default function App(){
     }, delay);
   };
 
-  // ── Start chat for a match ────────────────────────────────────────
+  // ── Start chat ─────────────────────────────────────────────────
   const startChat = (m) => {
-    const lk   = isLocked(m);
-    const ex   = preds[`${m.id}_${who.name}`]||{};
-    const done = STEPS.every(s=>!!ex[s.field]);
-    const t1   = tObj(m.team1)?.short;
-    const t2   = tObj(m.team2)?.short;
-
+    const lk  = isLocked(m);
+    const ex  = preds[`${m.id}_${who.name}`]||{};
+    const done= STEPS.every(s=>!!ex[s.field]);
+    const t1  = tObj(m.team1)?.short;
+    const t2  = tObj(m.team2)?.short;
     setMsgs([{from:"bot",text:`Hey ${who.name}! 👋\n\n🏏 ${t1} vs ${t2}\n📅 ${m.date}`,time:nowTime(),id:0}]);
-    setChatPreds({});
-    setSearch("");
-
+    setChatPreds({});setSearch("");
     if(lk){
       botMsg(done?"🔒 Match is locked!\n\nYour predictions are safely saved ✅":"🔒 Match is locked!\n\nPredictions closed 😔",700,()=>setStep(99));
       return;
@@ -141,54 +177,54 @@ export default function App(){
       botMsg("You already predicted this match! ✅\n\nWant to edit your predictions?",700,()=>setStep(-1));
       return;
     }
-    const label = STEPS[0].label.replace("__T1__",t1).replace("__T2__",t2);
+    const label=STEPS[0].label.replace("__T1__",t1).replace("__T2__",t2);
     botMsg(`Let's predict! 🔥\n\nQuestion 1 of 9\n\n${label}\n(+${STEPS[0].pts} pt)`,700,()=>setStep(0));
   };
 
-  // ── User answers a step ───────────────────────────────────────────
-  const answer = (value, display) => {
+  // ── Answer step ────────────────────────────────────────────────
+  const answer = async (value, display) => {
     if(step<0||step>=STEPS.length) return;
-
     setMsgs(prev=>[...prev,{from:"me",text:display,time:nowTime(),id:Math.random()}]);
     setSearch("");
-
     const field    = STEPS[step].field;
     const newPreds = {...chatPreds,[field]:value};
     setChatPreds(newPreds);
-
     const next = step+1;
-    if(next < STEPS.length){
-      const t1 = tObj(curMatch.team1)?.short;
-      const t2 = tObj(curMatch.team2)?.short;
-      const label = STEPS[next].label.replace("__T1__",t1).replace("__T2__",t2);
+    if(next<STEPS.length){
+      const t1=tObj(curMatch.team1)?.short;
+      const t2=tObj(curMatch.team2)?.short;
+      const label=STEPS[next].label.replace("__T1__",t1).replace("__T2__",t2);
       botMsg(`Question ${next+1} of 9\n\n${label}\n(+${STEPS[next].pts} pt${STEPS[next].pts>1?"s":""})`,650,()=>setStep(next));
     } else {
       setStep(99);
-      botMsg(`🎉 All 9 predictions saved!\n\nGood luck ${who.name}! 🏏\nMax ${MAX_PTS} pts up for grabs today!`,600);
-      const key = `${curMatch.id}_${who.name}`;
-      const u   = {...preds,[key]:newPreds};
-      setPreds(u); sv("i26_pr",u);
+      botMsg(`🎉 All 9 predictions saved!\n\nGood luck ${who.name}! 🏏\nMax ${MAX_PTS} pts up for grabs!`,600);
+      const key=`${curMatch.id}_${who.name}`;
+      const u={...preds,[key]:newPreds};
+      setPreds(u);
+      await dbSet("preds",u);
     }
   };
 
-  // ── Add match ─────────────────────────────────────────────────────
-  const addMatch = ()=>{
+  // ── Add match ──────────────────────────────────────────────────
+  const addMatch = async () => {
     if(!mSetup.team1||!mSetup.team2||mSetup.team1===mSetup.team2){tip("Pick 2 different teams!","err");return;}
     const m={id:mc,...mSetup};
-    const u=[...matches,m];setMatches(u);
-    const nc=mc+1;setMc(nc);sv("i26_ma",u);sv("i26_mc",nc);
+    const u=[...matches,m];
+    setMatches(u);
+    const nc=mc+1;setMc(nc);
+    await dbSet("matches",u);
+    await dbSet("mc",nc);
     setMSetup({team1:"",team2:"",date:new Date().toISOString().slice(0,10),lockTime:""});
     tip(`Match #${m.id} added! 🏏`);
   };
 
-  // ── PIN ───────────────────────────────────────────────────────────
-  const tryPin = ()=>{
+  // ── PIN ────────────────────────────────────────────────────────
+  const tryPin = () => {
     if(pinInput===pendingWho.pin){
       setWho(pendingWho);setPinInput("");setPinErr("");
       if(pendingWho.name===ADMIN_NAME){
         setScreen(SCREENS.ADMIN);
       } else {
-        // Auto-jump to today's match if exactly one match today and not yet predicted
         const today=new Date().toISOString().slice(0,10);
         const todayMatches=matches.filter(m=>m.date===today);
         const unpredicted=todayMatches.filter(m=>!preds[`${m.id}_${pendingWho.name}`]?.toss&&!isLocked(m));
@@ -200,17 +236,17 @@ export default function App(){
           setScreen(SCREENS.MATCHES);
         }
       }
-    }else{
+    } else {
       setPinErr("Wrong PIN! Try again.");setPinShake(true);
       setTimeout(()=>setPinShake(false),500);setPinInput("");
     }
   };
-  const logout = ()=>{setWho(null);setCurMatch(null);setScreen(SCREENS.LAND);};
+  const logout=()=>{setWho(null);setCurMatch(null);setScreen(SCREENS.LAND);};
 
-  // ── Results ───────────────────────────────────────────────────────
+  // ── Results ────────────────────────────────────────────────────
   const chkEq  = (a,b)=>a===b;
   const chkStr = (a,b)=>a&&b&&a.toLowerCase()===b.toLowerCase();
-  const calcPts = (p,r)=>{
+  const calcPts= (p,r)=>{
     if(!p||!r)return 0;let pts=0;
     if(chkEq(p.toss,r.tossWinner))          pts+=SC.toss;
     if(chkEq(p.tossDecision,r.tossDecision)) pts+=SC.tossDecision;
@@ -224,85 +260,57 @@ export default function App(){
     return pts;
   };
 
-  const submitResults = ()=>{
+  const submitResults = async () => {
     const req=["tossWinner","tossDecision","winner","topScorer","topWicket","manOfMatch","sixHitter","pp1","pp2"];
     if(req.some(f=>!rForm[f])){tip("Fill all fields!","err");return;}
-    const ur={...results,[adminMatch.id]:rForm};setResults(ur);sv("i26_re",ur);
-    const allRes={...ur};
+    const ur={...results,[adminMatch.id]:rForm};
+    setResults(ur); await dbSet("results",ur);
     const us={};
     MEMBERS.forEach(pl=>{
       us[pl.name]=matches.reduce((sum,m)=>{
-        const r=allRes[m.id];if(!r)return sum;
+        const r=ur[m.id];if(!r)return sum;
         return sum+calcPts(preds[`${m.id}_${pl.name}`]||{},r);
       },0);
     });
-    setScores(us);sv("i26_sc",us);
-    tip("Points awarded! 🏆");setScreen(SCREENS.COMPARE);
+    setScores(us); await dbSet("scores",us);
+    tip("Points awarded! 🏆"); setScreen(SCREENS.COMPARE);
   };
 
-  const buildShareText = mid=>{
+  const buildShareText = mid => {
     const r=results[mid];const m=matches.find(x=>x.id===mid);if(!r||!m)return"";
     const srt=[...MEMBERS].sort((a,b)=>(scores[b.name]||0)-(scores[a.name]||0));
     return`🏏 IPL 2026 Match #${mid}\n${tObj(m.team1)?.short} vs ${tObj(m.team2)?.short} | ${m.date}\n\n🎯 Toss: ${tObj(r.tossWinner)?.short} chose ${r.tossDecision}\n🏆 Winner: ${tObj(r.winner)?.short}\n🏃 ${r.topScorer} | 🎳 ${r.topWicket}\n⭐ MOTM: ${r.manOfMatch} | 💥 ${r.sixHitter}\n⚡ ${tObj(m.team1)?.short} PP: ${r.pp1} | ${tObj(m.team2)?.short} PP: ${r.pp2}\n\n🏆 STANDINGS:\n${srt.map((p,i)=>`${["🥇","🥈","🥉"][i]||`${i+1}.`} ${p.name} — ${scores[p.name]||0} pts`).join("\n")}`;
   };
 
-  const resetAll = ()=>{
+  const resetAll = async () => {
     setMatches([]);setPreds({});setResults({});setScores({});setMc(1);
-    ["i26_ma","i26_pr","i26_re","i26_sc","i26_mc"].forEach(lsDel);
+    await Promise.all([dbSet("matches",[]),dbSet("preds",{}),dbSet("results",{}),dbSet("scores",{}),dbSet("mc",1)]);
     setScreen(SCREENS.LAND);setWho(null);tip("Reset done!");
   };
 
-  const sorted = [...MEMBERS].sort((a,b)=>(scores[b.name]||0)-(scores[a.name]||0));
+  const sorted=[...MEMBERS].sort((a,b)=>(scores[b.name]||0)-(scores[a.name]||0));
+  const filtered=search.trim().length>1?ALL_PLAYERS.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())).slice(0,8):[];
 
-  // ── Players search filter ─────────────────────────────────────────
-  const filtered = search.trim().length>1
-    ? ALL_PLAYERS.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())).slice(0,8)
-    : [];
+  // ── STYLES ─────────────────────────────────────────────────────
+  const OR="#f97316";
+  const WA_HEADER="#075E54";const WA_BG="#E5DDD5";const WA_BOT="#FFFFFF";
+  const WA_ME="#DCF8C6";const WA_TICK="#53bdeb";const WA_TIME="#999999";
+  const WA_INPUT_BG="#F0F0F0";const WA_GREEN="#25D366";
+  const qBtn={display:"flex",alignItems:"center",gap:8,padding:"10px 20px",borderRadius:20,border:`1.5px solid ${WA_GREEN}`,background:"#fff",cursor:"pointer",fontFamily:"sans-serif",fontWeight:700,color:WA_HEADER,fontSize:14,boxShadow:"0 1px 4px rgba(0,0,0,0.1)"};
+  const adminInp={width:"100%",background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,165,0,0.2)",borderRadius:10,padding:"11px 13px",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"sans-serif"};
+  const adminSel={width:"100%",background:"#0d0d1a",border:"1px solid rgba(255,165,0,0.2)",borderRadius:10,padding:"11px 13px",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"sans-serif",cursor:"pointer"};
+  const aCard={background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,165,0,0.15)",borderRadius:18,padding:"18px",marginBottom:16};
+  const aLbl={fontSize:11,color:OR,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",display:"block",marginBottom:6,fontFamily:"sans-serif"};
+  const aBtnMain={width:"100%",padding:"12px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${OR},#ea580c)`,color:"#fff",fontSize:16,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2,cursor:"pointer"};
+  const navInp={width:"100%",background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:10,padding:"12px 14px",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"sans-serif"};
+  const adminOpt=on=>({flex:1,padding:"10px 6px",borderRadius:10,border:`1px solid ${on?OR:"rgba(255,255,255,0.08)"}`,cursor:"pointer",background:on?`linear-gradient(135deg,${OR},#ea580c)`:"rgba(255,255,255,0.04)",color:on?"#fff":"#aaa",fontSize:12,fontFamily:"sans-serif",fontWeight:on?700:400,display:"flex",flexDirection:"column",alignItems:"center",gap:3});
 
-  // ── STYLES ────────────────────────────────────────────────────────
-  const OR = "#f97316";
-  const NV = {bg:"#0D1B3E"};
-
-  // WhatsApp exact colors
-  const WA_HEADER    = "#075E54";
-  const WA_BG        = "#E5DDD5";
-  const WA_BOT       = "#FFFFFF";
-  const WA_ME        = "#DCF8C6";
-  const WA_TICK      = "#53bdeb";
-  const WA_TIME      = "#999999";
-  const WA_INPUT_BG  = "#F0F0F0";
-  const WA_GREEN     = "#25D366";
-
-  // Team option button (WhatsApp quick-reply style)
-  const qBtn = {
-    display:"flex",alignItems:"center",gap:8,padding:"10px 20px",
-    borderRadius:20,border:`1.5px solid ${WA_GREEN}`,background:"#fff",
-    cursor:"pointer",fontFamily:"sans-serif",fontWeight:700,
-    color:WA_HEADER,fontSize:14,boxShadow:"0 1px 4px rgba(0,0,0,0.1)"
-  };
-  const ppBtn = (on)=>({
-    flex:1,padding:"10px 6px",borderRadius:20,
-    border:`1.5px solid ${on?WA_GREEN:"#ddd"}`,
-    background:on?WA_GREEN:"#fff",color:on?"#fff":WA_HEADER,
-    cursor:"pointer",fontFamily:"sans-serif",fontWeight:700,fontSize:13,
-    boxShadow:"0 1px 3px rgba(0,0,0,0.08)"
-  });
-
-  const adminInp = {width:"100%",background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,165,0,0.2)",borderRadius:10,padding:"11px 13px",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"sans-serif"};
-  const adminSel = {width:"100%",background:"#0d0d1a",border:"1px solid rgba(255,165,0,0.2)",borderRadius:10,padding:"11px 13px",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"sans-serif",cursor:"pointer"};
-  const aCard    = {background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,165,0,0.15)",borderRadius:18,padding:"18px",marginBottom:16};
-  const aLbl     = {fontSize:11,color:OR,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",display:"block",marginBottom:6,fontFamily:"sans-serif"};
-  const aBtnMain = {width:"100%",padding:"12px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${OR},#ea580c)`,color:"#fff",fontSize:16,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2,cursor:"pointer"};
-  const navInp   = {width:"100%",background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:10,padding:"12px 14px",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"sans-serif"};
-
-  const adminOpt = (on)=>({flex:1,padding:"10px 6px",borderRadius:10,border:`1px solid ${on?OR:"rgba(255,255,255,0.08)"}`,cursor:"pointer",background:on?`linear-gradient(135deg,${OR},#ea580c)`:"rgba(255,255,255,0.04)",color:on?"#fff":"#aaa",fontSize:12,fontFamily:"sans-serif",fontWeight:on?700:400,display:"flex",flexDirection:"column",alignItems:"center",gap:3});
-
-  const PPRangeAdmin = ({value,onChange})=>(
+  const PPRangeAdmin=({value,onChange})=>(
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
-      {PP_RANGES.map(r=><button key={r} style={adminOpt(value===r)} onClick={()=>onChange(r)}><div style={{fontSize:12}}>{r==="< 40"?"🔻":r==="> 70"?"🔺":"⚡"}</div><div style={{fontSize:11,fontWeight:700}}>{r}</div></button>)}
+      {["< 40","40–55","55–70","> 70"].map(r=><button key={r} style={adminOpt(value===r)} onClick={()=>onChange(r)}><div style={{fontSize:12}}>{r==="< 40"?"🔻":r==="> 70"?"🔺":"⚡"}</div><div style={{fontSize:11,fontWeight:700}}>{r}</div></button>)}
     </div>
   );
-  const TeamOptsAdmin = ({value,onChange,match})=>(
+  const TeamOptsAdmin=({value,onChange,match})=>(
     <div style={{display:"flex",gap:8}}>
       {[match?.team1,match?.team2].filter(Boolean).map(tn=>{const t=tObj(tn);return(
         <button key={tn} style={adminOpt(value===tn)} onClick={()=>onChange(tn)}>
@@ -312,7 +320,8 @@ export default function App(){
       );})}
     </div>
   );
-  const PlayerPickerAdmin = ({value,onChange})=>{
+
+  const PlayerPickerAdmin=({value,onChange})=>{
     const [q,setQ]=useState(value||"");const [open,setOpen]=useState(false);
     useEffect(()=>setQ(value||""),[value]);
     const fl=q.trim().length>0?ALL_PLAYERS.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())).slice(0,10):[];
@@ -343,7 +352,20 @@ export default function App(){
     );
   };
 
-  // ─────────────────────────────────────────────────────────────────
+  // ── LOADING SCREEN ─────────────────────────────────────────────
+  if(loading) return(
+    <div style={{minHeight:"100vh",background:"#075E54",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"Poppins,sans-serif"}}>
+      <div style={{fontSize:56,marginBottom:16}}>🏏</div>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color:"#fff",letterSpacing:3}}>IPL 2026</div>
+      <div style={{color:"rgba(255,255,255,0.6)",fontSize:14,marginTop:8}}>Loading predictions...</div>
+      <div style={{display:"flex",gap:8,marginTop:20}}>
+        {[0,1,2].map(i=><div key={i} style={{width:10,height:10,borderRadius:"50%",background:"#25D366",animation:"blink 1.4s infinite",animationDelay:`${i*0.2}s`}}/>)}
+      </div>
+      <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Poppins:wght@400;600;700&display=swap" rel="stylesheet"/>
+      <style>{`@keyframes blink{0%,80%,100%{opacity:0.2}40%{opacity:1}}`}</style>
+    </div>
+  );
+
   return(
     <>
       <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Poppins:wght@400;600;700&display=swap" rel="stylesheet"/>
@@ -351,11 +373,11 @@ export default function App(){
         @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
         @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
         @keyframes blink{0%,80%,100%{opacity:0}40%{opacity:1}}
-        * { box-sizing:border-box; }
-        .msg-in  { animation: fadeUp 0.25s ease; }
+        .msg-in{animation:fadeUp 0.25s ease}
+        *{box-sizing:border-box}
       `}</style>
 
-      {/* ══════════════ LANDING — instant name picker ══════════════ */}
+      {/* ══ LANDING ══ */}
       {screen===SCREENS.LAND&&(
         <div style={{minHeight:"100vh",background:"#075E54",fontFamily:"Poppins,sans-serif",display:"flex",flexDirection:"column"}}>
           <div style={{background:"#075E54",padding:"16px 18px 12px",boxShadow:"0 1px 6px rgba(0,0,0,0.2)"}}>
@@ -364,12 +386,7 @@ export default function App(){
               <div>
                 <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#fff",letterSpacing:2,lineHeight:1}}>IPL 2026 PREDICTIONS</div>
                 <div style={{fontSize:12,color:"rgba(255,255,255,0.65)",marginTop:2}}>
-                  {(()=>{
-                    const today=new Date().toISOString().slice(0,10);
-                    const tm=matches.filter(m=>m.date===today);
-                    if(tm.length>0) return `🔥 ${tm.length} match${tm.length>1?"es":""}  today — predict now!`;
-                    return "Tap your name to predict";
-                  })()}
+                  {(()=>{const today=new Date().toISOString().slice(0,10);const tm=matches.filter(m=>m.date===today);if(tm.length>0)return`🔥 ${tm.length} match${tm.length>1?"es":""} today — predict now!`;return"Tap your name to predict";})()}
                 </div>
               </div>
             </div>
@@ -383,8 +400,7 @@ export default function App(){
               const tm=matches.filter(x=>x.date===today);
               const hasPred=tm.some(x=>!!preds[`${x.id}_${m.name}`]?.toss);
               return(
-                <button key={i}
-                  onClick={()=>{setPendingWho(m);setPinInput("");setPinErr("");setScreen(SCREENS.PIN);}}
+                <button key={i} onClick={()=>{setPendingWho(m);setPinInput("");setPinErr("");setScreen(SCREENS.PIN);}}
                   style={{display:"flex",alignItems:"center",gap:14,padding:"13px 18px",background:"#fff",border:"none",borderBottom:"1px solid #f5f5f5",cursor:"pointer",width:"100%",textAlign:"left"}}
                   onMouseEnter={e=>e.currentTarget.style.background="#f9f9f9"}
                   onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
@@ -392,18 +408,12 @@ export default function App(){
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontWeight:700,fontSize:16,color:"#111"}}>{m.name}</div>
                     <div style={{fontSize:12,color:"#aaa",marginTop:2}}>
-                      {m.name===ADMIN_NAME
-                        ?"⭐ Admin — enter results & share"
-                        :hasPred
-                          ?<span style={{color:"#53bdeb"}}>✓✓ Already predicted today</span>
-                          :"Tap to predict today's match"
-                      }
+                      {m.name===ADMIN_NAME?"⭐ Admin — enter results & share":hasPred?<span style={{color:"#53bdeb"}}>✓✓ Already predicted today</span>:"Tap to predict today's match"}
                     </div>
                   </div>
-                  {m.name!==ADMIN_NAME&&(
-                    hasPred
-                      ?<div style={{width:20,height:20,borderRadius:"50%",background:"#53bdeb",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,color:"#fff"}}>✓</div>
-                      :<div style={{width:20,height:20,borderRadius:"50%",background:"#25D366",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,fontWeight:800,color:"#fff"}}>!</div>
+                  {m.name!==ADMIN_NAME&&(hasPred
+                    ?<div style={{width:20,height:20,borderRadius:"50%",background:"#53bdeb",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,color:"#fff"}}>✓</div>
+                    :<div style={{width:20,height:20,borderRadius:"50%",background:"#25D366",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,fontWeight:800,color:"#fff"}}>!</div>
                   )}
                   <div style={{color:"#ccc",fontSize:18,marginLeft:4}}>›</div>
                 </button>
@@ -412,16 +422,14 @@ export default function App(){
             {(()=>{
               const today=new Date().toISOString().slice(0,10);
               const tm=matches.filter(m=>m.date===today);
-              if(tm.length===0) return null;
+              if(tm.length===0)return null;
               return(
                 <div style={{margin:"12px 16px",background:"#e8f5e9",borderRadius:12,padding:"10px 14px",border:"1px solid #c8e6c9"}}>
                   <div style={{fontSize:11,fontWeight:700,color:"#1b5e20",marginBottom:6}}>🏏 TODAY'S MATCH{tm.length>1?"ES":""}</div>
                   {tm.map(m=>(
                     <div key={m.id} style={{fontSize:13,color:"#2e7d32",fontWeight:600}}>
                       {tObj(m.team1)?.short} vs {tObj(m.team2)?.short}
-                      {m.lockTime&&<span style={{fontSize:11,color:"#4caf50",fontWeight:400,marginLeft:6}}>
-                        · {isLocked(m)?"🔒 Locked":"Locks "+new Date(m.lockTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}
-                      </span>}
+                      {m.lockTime&&<span style={{fontSize:11,color:"#4caf50",fontWeight:400,marginLeft:6}}>· {isLocked(m)?"🔒 Locked":"Locks "+new Date(m.lockTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</span>}
                     </div>
                   ))}
                 </div>
@@ -431,9 +439,9 @@ export default function App(){
         </div>
       )}
 
-      {/* ══════════════ PIN ══════════════ */}
+      {/* ══ PIN ══ */}
       {screen===SCREENS.PIN&&(
-        <div style={{minHeight:"100vh",background:NV.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:"Poppins,sans-serif"}}>
+        <div style={{minHeight:"100vh",background:"#0D1B3E",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:"Poppins,sans-serif"}}>
           <div style={{width:"100%",maxWidth:310,animation:"fadeUp 0.3s ease"}}>
             <div style={{textAlign:"center",marginBottom:22}}>
               <div style={{fontSize:50}}>{emo(pendingWho?.name||"")}</div>
@@ -452,7 +460,6 @@ export default function App(){
               <button onClick={tryPin} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#4A90E2,#1a5fac)",color:"#fff",fontSize:15,fontFamily:"Poppins,sans-serif",fontWeight:700,cursor:"pointer"}}>UNLOCK</button>
               <button onClick={()=>setScreen(SCREENS.LAND)} style={{width:"100%",padding:"9px",borderRadius:10,border:"1px solid rgba(255,255,255,0.12)",background:"transparent",color:"rgba(255,255,255,0.35)",fontSize:12,fontFamily:"Poppins,sans-serif",cursor:"pointer",marginTop:8}}>← Change Name</button>
             </div>
-            {/* Numpad */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginTop:16}}>
               {[1,2,3,4,5,6,7,8,9,"","0","⌫"].map((k,i)=>(
                 <button key={i} onClick={()=>{if(k==="⌫")setPinInput(p=>p.slice(0,-1));else if(k!=="")setPinInput(p=>p.length<6?p+k:p);}}
@@ -467,10 +474,9 @@ export default function App(){
         </div>
       )}
 
-      {/* ══════════════ MATCHES LIST — WhatsApp chat list ══════════════ */}
+      {/* ══ MATCHES LIST ══ */}
       {screen===SCREENS.MATCHES&&who&&(
         <div style={{minHeight:"100vh",background:"#f0f0f0",fontFamily:"Poppins,sans-serif"}}>
-          {/* WhatsApp header */}
           <div style={{background:WA_HEADER,padding:"14px 16px",position:"sticky",top:0,zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.3)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:38,height:38,borderRadius:"50%",background:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{emo(who.name)}</div>
@@ -481,40 +487,20 @@ export default function App(){
               <button onClick={logout} style={{padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"transparent",color:"rgba(255,255,255,0.75)",fontSize:12,cursor:"pointer"}}>Exit</button>
             </div>
           </div>
-
-          {/* Chat list */}
           <div style={{background:"#fff"}}>
-            {matches.length===0&&(
-              <div style={{padding:40,textAlign:"center",color:"#aaa",fontSize:13}}>
-                No matches yet!<br/>Ask VSN to add matches 🏏
-              </div>
-            )}
+            {matches.length===0&&<div style={{padding:40,textAlign:"center",color:"#aaa",fontSize:13}}>No matches yet!<br/>Ask VSN to add matches 🏏</div>}
             {matches.map(m=>{
-              const lk      = isLocked(m);
-              const hasPred = !!preds[`${m.id}_${who.name}`]?.toss;
-              const t1      = tObj(m.team1)?.short;
-              const t2      = tObj(m.team2)?.short;
-              const sameDay = matches.filter(x=>x.date===m.date);
-              const isDouble= sameDay.length>1;
-              const idx     = sameDay.findIndex(x=>x.id===m.id);
+              const lk=isLocked(m);const hasPred=!!preds[`${m.id}_${who.name}`]?.toss;
+              const t1=tObj(m.team1)?.short;const t2=tObj(m.team2)?.short;
+              const sameDay=matches.filter(x=>x.date===m.date);const isDouble=sameDay.length>1;const idx=sameDay.findIndex(x=>x.id===m.id);
               return(
-                <div key={m.id}
-                  onClick={()=>{
-                    if(lk&&!hasPred){tip("Match is locked!","err");return;}
-                    setCurMatch(m);setStep(0);
-                    setMsgs([]);setTyping(false);
-                    setScreen(SCREENS.CHAT);
-                    setTimeout(()=>startChat(m),100);
-                  }}
-                  style={{display:"flex",alignItems:"center",gap:14,padding:"12px 16px",borderBottom:"1px solid #f5f5f5",cursor:"pointer",background:"#fff",transition:"background 0.15s"}}
+                <div key={m.id} onClick={()=>{if(lk&&!hasPred){tip("Match is locked!","err");return;}setCurMatch(m);setStep(0);setMsgs([]);setTyping(false);setScreen(SCREENS.CHAT);setTimeout(()=>startChat(m),100);}}
+                  style={{display:"flex",alignItems:"center",gap:14,padding:"12px 16px",borderBottom:"1px solid #f5f5f5",cursor:"pointer",background:"#fff"}}
                   onMouseEnter={e=>e.currentTarget.style.background="#f9f9f9"}
                   onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
-
-                  {/* Avatar — gradient of both team colors */}
                   <div style={{width:52,height:52,borderRadius:"50%",background:`linear-gradient(135deg,${tObj(m.team1)?.color},${tObj(m.team2)?.color})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <span style={{fontSize:10,fontWeight:800,color:"#fff",textAlign:"center",lineHeight:1.2}}>{t1}<br/>vs<br/>{t2}</span>
                   </div>
-
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                       <div style={{fontWeight:700,fontSize:15,color:"#111"}}>
@@ -524,21 +510,12 @@ export default function App(){
                       <div style={{fontSize:11,color:"#aaa",flexShrink:0,marginLeft:8}}>{m.date}</div>
                     </div>
                     <div style={{fontSize:12,color:"#888",marginTop:3,display:"flex",alignItems:"center",gap:5}}>
-                      {hasPred
-                        ?<><span style={{color:WA_TICK,fontSize:14}}>✓✓</span><span style={{color:WA_TICK,fontWeight:600}}>Predicted ✅</span></>
-                        :lk
-                          ?<span style={{color:"#f44336",fontWeight:600}}>🔒 Locked</span>
-                          :<><span>Tap to predict</span><span style={{color:"#aaa"}}>· 9 questions</span></>
-                      }
+                      {hasPred?<><span style={{color:WA_TICK,fontSize:14}}>✓✓</span><span style={{color:WA_TICK,fontWeight:600}}>Predicted ✅</span></>
+                        :lk?<span style={{color:"#f44336",fontWeight:600}}>🔒 Locked</span>
+                        :<><span>Tap to predict</span><span style={{color:"#aaa"}}>· 9 questions</span></>}
                     </div>
                   </div>
-
-                  {/* Unread badge */}
-                  {!hasPred&&!lk&&(
-                    <div style={{width:22,height:22,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{color:"#fff",fontSize:12,fontWeight:800}}>!</span>
-                    </div>
-                  )}
+                  {!hasPred&&!lk&&<div style={{width:22,height:22,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{color:"#fff",fontSize:12,fontWeight:800}}>!</span></div>}
                 </div>
               );
             })}
@@ -546,16 +523,12 @@ export default function App(){
         </div>
       )}
 
-      {/* ══════════════ CHAT — WhatsApp chat window ══════════════ */}
+      {/* ══ CHAT ══ */}
       {screen===SCREENS.CHAT&&who&&curMatch&&(
         <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:"sans-serif",overflow:"hidden"}}>
-
-          {/* WhatsApp top bar */}
           <div style={{background:WA_HEADER,padding:"10px 14px",flexShrink:0,boxShadow:"0 1px 6px rgba(0,0,0,0.3)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <button onClick={()=>setScreen(SCREENS.MATCHES)}
-                style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.8)",fontSize:24,cursor:"pointer",padding:0,lineHeight:1,marginRight:2}}>‹</button>
-              {/* Bot avatar */}
+              <button onClick={()=>setScreen(SCREENS.MATCHES)} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.8)",fontSize:24,cursor:"pointer",padding:0,lineHeight:1,marginRight:2}}>‹</button>
               <div style={{width:42,height:42,borderRadius:"50%",background:`linear-gradient(135deg,${WA_GREEN},#128C7E)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>🏏</div>
               <div style={{flex:1}}>
                 <div style={{fontFamily:"Poppins,sans-serif",fontWeight:700,fontSize:15,color:"#fff"}}>IPL Predictor Bot</div>
@@ -563,34 +536,21 @@ export default function App(){
                   {typing?"typing...":step>=0&&step<STEPS.length?`Question ${step+1} of 9`:step===99?"All done ✅":""}
                 </div>
               </div>
-              {/* Progress */}
               <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3}}>
                 <div style={{width:56,height:4,background:"rgba(255,255,255,0.2)",borderRadius:2,overflow:"hidden"}}>
-                  <div style={{width:`${step>=0&&step<STEPS.length?((step)/STEPS.length)*100:step===99?100:0}%`,height:"100%",background:"#fff",borderRadius:2,transition:"width 0.4s"}}/>
+                  <div style={{width:`${step>=0&&step<STEPS.length?(step/STEPS.length)*100:step===99?100:0}%`,height:"100%",background:"#fff",borderRadius:2,transition:"width 0.4s"}}/>
                 </div>
-                <span style={{color:"rgba(255,255,255,0.7)",fontSize:10,fontFamily:"Poppins,sans-serif"}}>
-                  {step>=0&&step<STEPS.length?`${step+1}/9`:step===99?"✓":"–"}
-                </span>
+                <span style={{color:"rgba(255,255,255,0.7)",fontSize:10,fontFamily:"Poppins,sans-serif"}}>{step>=0&&step<STEPS.length?`${step+1}/9`:step===99?"✓":"–"}</span>
               </div>
             </div>
           </div>
 
-          {/* Messages area */}
-          <div style={{flex:1,overflowY:"auto",background:WA_BG,padding:"10px 10px 6px",backgroundImage:"url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c8b9a8' fill-opacity='0.3'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")"}}>
-
+          <div style={{flex:1,overflowY:"auto",background:WA_BG,padding:"10px 10px 6px"}}>
             {msgs.map(msg=>{
-              const isMe = msg.from==="me";
+              const isMe=msg.from==="me";
               return(
-                <div key={msg.id} className="msg-in"
-                  style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start",marginBottom:4,paddingLeft:isMe?"48px":"0",paddingRight:isMe?"0":"48px"}}>
-                  <div style={{
-                    background:isMe?WA_ME:WA_BOT,
-                    borderRadius:isMe?"10px 2px 10px 10px":"2px 10px 10px 10px",
-                    padding:"8px 10px 5px 10px",
-                    maxWidth:"88%",
-                    boxShadow:"0 1px 2px rgba(0,0,0,0.13)",
-                    minWidth:80,
-                  }}>
+                <div key={msg.id} className="msg-in" style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start",marginBottom:4,paddingLeft:isMe?"48px":"0",paddingRight:isMe?"0":"48px"}}>
+                  <div style={{background:isMe?WA_ME:WA_BOT,borderRadius:isMe?"10px 2px 10px 10px":"2px 10px 10px 10px",padding:"8px 10px 5px 10px",maxWidth:"88%",boxShadow:"0 1px 2px rgba(0,0,0,0.13)",minWidth:80}}>
                     <div style={{fontSize:14,color:"#111",lineHeight:1.55,whiteSpace:"pre-wrap",fontFamily:"sans-serif"}}>{msg.text}</div>
                     <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end",marginTop:2}}>
                       <span style={{fontSize:10,color:WA_TIME}}>{msg.time}</span>
@@ -600,8 +560,6 @@ export default function App(){
                 </div>
               );
             })}
-
-            {/* Typing indicator */}
             {typing&&(
               <div style={{display:"flex",justifyContent:"flex-start",marginBottom:4,paddingRight:48}}>
                 <div style={{background:WA_BOT,borderRadius:"2px 10px 10px 10px",padding:"10px 14px",boxShadow:"0 1px 2px rgba(0,0,0,0.1)",display:"flex",gap:4,alignItems:"center"}}>
@@ -609,74 +567,38 @@ export default function App(){
                 </div>
               </div>
             )}
-
             <div ref={bottomRef}/>
           </div>
 
-          {/* ── INPUT AREA — changes per step ── */}
           <div style={{flexShrink:0,borderTop:"2px solid #ddd",background:WA_INPUT_BG}}>
-
-            {/* EDIT / KEEP when already predicted */}
             {step===-1&&(
               <div style={{padding:"10px 12px 14px",display:"flex",gap:8}}>
-                <button onClick={()=>{
-                  const ex=preds[`${curMatch.id}_${who.name}`]||{};
-                  setChatPreds(ex);
-                  const t1=tObj(curMatch.team1)?.short;const t2=tObj(curMatch.team2)?.short;
-                  const label=STEPS[0].label.replace("__T1__",t1).replace("__T2__",t2);
-                  setMsgs(prev=>[...prev,{from:"me",text:"Yes, edit 📝",time:nowTime(),id:Math.random()}]);
-                  botMsg(`Question 1 of 9\n\n${label}\n(+${STEPS[0].pts} pt)`,600,()=>setStep(0));
-                }} style={{...qBtn,flex:1,justifyContent:"center"}}>📝 Edit predictions</button>
-                <button onClick={()=>{
-                  setMsgs(prev=>[...prev,{from:"me",text:"No, keep it ✅",time:nowTime(),id:Math.random()}]);
-                  setStep(99);
-                  botMsg("All good! Your predictions are locked in 🔒\nGood luck!",600);
-                }} style={{...qBtn,flex:1,justifyContent:"center",background:"#f9f9f9",color:"#555"}}>✅ Keep as is</button>
+                <button onClick={()=>{const ex=preds[`${curMatch.id}_${who.name}`]||{};setChatPreds(ex);const t1=tObj(curMatch.team1)?.short;const t2=tObj(curMatch.team2)?.short;const label=STEPS[0].label.replace("__T1__",t1).replace("__T2__",t2);setMsgs(prev=>[...prev,{from:"me",text:"Yes, edit 📝",time:nowTime(),id:Math.random()}]);botMsg(`Question 1 of 9\n\n${label}\n(+${STEPS[0].pts} pt)`,600,()=>setStep(0));}} style={{...qBtn,flex:1,justifyContent:"center"}}>📝 Edit predictions</button>
+                <button onClick={()=>{setMsgs(prev=>[...prev,{from:"me",text:"No, keep it ✅",time:nowTime(),id:Math.random()}]);setStep(99);botMsg("All good! Predictions locked in 🔒 Good luck!",600);}} style={{...qBtn,flex:1,justifyContent:"center",background:"#f9f9f9",color:"#555"}}>✅ Keep as is</button>
               </div>
             )}
-
-            {/* TEAM choice */}
             {step>=0&&step<STEPS.length&&STEPS[step].type==="team"&&(
               <div style={{padding:"10px 12px 14px",display:"flex",gap:10,justifyContent:"center"}}>
-                {[curMatch.team1,curMatch.team2].filter(Boolean).map(tn=>{
-                  const t=tObj(tn);
-                  return(
-                    <button key={tn} onClick={()=>answer(tn,`${t?.short} 🏏`)} style={qBtn}>
-                      <div style={{width:26,height:26,borderRadius:"50%",background:t?.color,border:`1px solid ${t?.accent}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:800,color:"#fff"}}>{t?.short}</div>
-                      <span style={{fontSize:15}}>{t?.short}</span>
-                    </button>
-                  );
-                })}
+                {[curMatch.team1,curMatch.team2].filter(Boolean).map(tn=>{const t=tObj(tn);return(
+                  <button key={tn} onClick={()=>answer(tn,`${t?.short} 🏏`)} style={qBtn}>
+                    <div style={{width:26,height:26,borderRadius:"50%",background:t?.color,border:`1px solid ${t?.accent}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:800,color:"#fff"}}>{t?.short}</div>
+                    <span style={{fontSize:15}}>{t?.short}</span>
+                  </button>
+                );})}
               </div>
             )}
-
-            {/* BAT / BOWL */}
             {step>=0&&step<STEPS.length&&STEPS[step].type==="batbowl"&&(
               <div style={{padding:"10px 12px 14px",display:"flex",gap:10,justifyContent:"center"}}>
-                {[{v:"Bat",i:"🏏"},{v:"Bowl",i:"🎳"}].map(d=>(
-                  <button key={d.v} onClick={()=>answer(d.v,`${d.i} ${d.v}`)}
-                    style={{...qBtn,padding:"12px 32px",fontSize:15}}>
-                    {d.i} {d.v}
-                  </button>
-                ))}
+                {[{v:"Bat",i:"🏏"},{v:"Bowl",i:"🎳"}].map(d=><button key={d.v} onClick={()=>answer(d.v,`${d.i} ${d.v}`)} style={{...qBtn,padding:"12px 32px",fontSize:15}}>{d.i} {d.v}</button>)}
               </div>
             )}
-
-            {/* PP RANGE */}
             {step>=0&&step<STEPS.length&&STEPS[step].type==="pprange"&&(
               <div style={{padding:"10px 12px 14px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                {PP_RANGES.map(r=>(
-                  <button key={r} onClick={()=>answer(r,`⚡ ${r}`)} style={{...ppBtn(false),padding:"12px 8px",fontSize:14}}>
-                    {r==="< 40"?"🔻 ":r==="> 70"?"🔺 ":"⚡ "}{r}
-                  </button>
-                ))}
+                {PP_RANGES.map(r=><button key={r} onClick={()=>answer(r,`⚡ ${r}`)} style={{...qBtn,padding:"12px 8px",fontSize:14,justifyContent:"center"}}>{r==="< 40"?"🔻 ":r==="> 70"?"🔺 ":"⚡ "}{r}</button>)}
               </div>
             )}
-
-            {/* PLAYER SEARCH */}
             {step>=0&&step<STEPS.length&&STEPS[step].type==="player"&&(
               <div>
-                {/* Suggestions */}
                 {filtered.length>0&&(
                   <div style={{background:"#fff",borderTop:"1px solid #eee",maxHeight:190,overflowY:"auto"}}>
                     {filtered.map((p,i)=>{
@@ -694,52 +616,32 @@ export default function App(){
                     })}
                   </div>
                 )}
-                {/* Search input bar */}
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:WA_INPUT_BG}}>
                   <div style={{flex:1,background:"#fff",borderRadius:24,display:"flex",alignItems:"center",padding:"0 14px",boxShadow:"0 1px 3px rgba(0,0,0,0.1)"}}>
                     <span style={{fontSize:16,color:"#bbb",marginRight:8}}>🔍</span>
-                    <input value={search} onChange={e=>setSearch(e.target.value)}
-                      placeholder="Type player name to search..."
-                      style={{flex:1,border:"none",outline:"none",fontSize:14,padding:"11px 0",background:"transparent",color:"#333",fontFamily:"sans-serif"}}
-                      autoFocus/>
+                    <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Type player name to search..."
+                      style={{flex:1,border:"none",outline:"none",fontSize:14,padding:"11px 0",background:"transparent",color:"#333",fontFamily:"sans-serif"}} autoFocus/>
                     {search&&<button onClick={()=>setSearch("")} style={{background:"transparent",border:"none",color:"#aaa",fontSize:18,cursor:"pointer",padding:"0 2px"}}>×</button>}
                   </div>
                 </div>
               </div>
             )}
-
-            {/* DONE state — just go back button */}
-            {step===99&&(
-              <div style={{padding:"10px 12px 14px",textAlign:"center"}}>
-                <button onClick={()=>setScreen(SCREENS.MATCHES)}
-                  style={{...qBtn,padding:"12px 32px",justifyContent:"center",background:WA_GREEN,borderColor:WA_GREEN,color:"#fff"}}>
-                  ← Back to Matches
-                </button>
-              </div>
-            )}
-
-            {/* LOCKED state */}
-            {step===98&&(
-              <div style={{padding:"10px 12px 14px",textAlign:"center"}}>
-                <button onClick={()=>setScreen(SCREENS.MATCHES)} style={{...qBtn,padding:"12px 32px",justifyContent:"center"}}>← Back</button>
-              </div>
-            )}
+            {step===99&&<div style={{padding:"10px 12px 14px",textAlign:"center"}}><button onClick={()=>setScreen(SCREENS.MATCHES)} style={{...qBtn,padding:"12px 32px",justifyContent:"center",background:WA_GREEN,borderColor:WA_GREEN,color:"#fff"}}>← Back to Matches</button></div>}
           </div>
         </div>
       )}
 
-      {/* ══════════════ ADMIN ══════════════ */}
+      {/* ══ ADMIN ══ */}
       {screen===SCREENS.ADMIN&&who?.name===ADMIN_NAME&&(
         <div style={{minHeight:"100vh",background:"#080810",color:"#fff",fontFamily:"Poppins,sans-serif"}}>
           <div style={{background:"rgba(255,255,255,0.04)",borderBottom:"1px solid rgba(255,165,0,0.2)",padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <div>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:OR,letterSpacing:2}}>⭐ ADMIN — VSN</div>
-              <div style={{fontSize:10,color:"#444"}}>Max {MAX_PTS} pts per match</div>
+              <div style={{fontSize:10,color:"#444"}}>Max {MAX_PTS} pts per match · All devices sync</div>
             </div>
             <button onClick={logout} style={{padding:"7px 14px",borderRadius:8,border:"1px solid rgba(249,115,22,0.3)",background:"transparent",color:OR,fontSize:12,cursor:"pointer"}}>Logout</button>
           </div>
           <div style={{maxWidth:520,margin:"0 auto",padding:"18px 16px"}}>
-            {/* Add match */}
             <div style={aCard}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:OR,letterSpacing:2,marginBottom:14}}>➕ ADD MATCH</div>
               <div style={{marginBottom:12}}><label style={aLbl}>Team 1</label>
@@ -753,10 +655,7 @@ export default function App(){
                 </select>
               </div>
               <div style={{marginBottom:12}}><label style={aLbl}>Match Date</label>
-                <input type="date" style={adminInp} value={mSetup.date} onChange={e=>{
-                  const d=e.target.value;const day=new Date(d+"T00:00:00").getDay();
-                  setMSetup({...mSetup,date:d,lockTime:d?`${d}T${day===0||day===6?"15:30":"19:30"}`:""});
-                }}/>
+                <input type="date" style={adminInp} value={mSetup.date} onChange={e=>{const d=e.target.value;const day=new Date(d+"T00:00:00").getDay();setMSetup({...mSetup,date:d,lockTime:d?`${d}T${day===0||day===6?"15:30":"19:30"}`:""});}}/>
               </div>
               <div style={{marginBottom:14}}><label style={aLbl}>🔒 Lock At <span style={{color:"#22c55e",fontSize:10,fontWeight:400,textTransform:"none"}}>(auto-set)</span></label>
                 <input type="datetime-local" style={adminInp} value={mSetup.lockTime} onChange={e=>setMSetup({...mSetup,lockTime:e.target.value})}/>
@@ -765,23 +664,18 @@ export default function App(){
               <button onClick={addMatch} style={aBtnMain}>ADD MATCH</button>
             </div>
 
-            {/* Matches */}
             {matches.length>0&&<div style={aCard}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:OR,letterSpacing:2,marginBottom:12}}>🏟️ MATCHES</div>
               {matches.map(m=>{
                 const done=!!results[m.id];const lk=isLocked(m);
                 const dc=MEMBERS.filter(pl=>preds[`${m.id}_${pl.name}`]?.toss).length;
-                const sameDay=matches.filter(x=>x.date===m.date);
-                const isDouble=sameDay.length>1;const idx=sameDay.findIndex(x=>x.id===m.id);
+                const sameDay=matches.filter(x=>x.date===m.date);const isDouble=sameDay.length>1;const idx=sameDay.findIndex(x=>x.id===m.id);
                 return(
                   <div key={m.id} style={{background:"rgba(255,255,255,0.03)",borderRadius:12,padding:"10px 12px",marginBottom:8,border:"1px solid rgba(255,255,255,0.05)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <Ball name={m.team1} size={26}/>
                       <div style={{flex:1}}>
-                        <div style={{fontSize:12,fontWeight:600,color:"#ddd"}}>
-                          {tObj(m.team1)?.short} vs {tObj(m.team2)?.short} · #{m.id}
-                          {isDouble&&<span style={{fontSize:10,color:OR,marginLeft:6}}>Match {idx+1}</span>}
-                        </div>
+                        <div style={{fontSize:12,fontWeight:600,color:"#ddd"}}>{tObj(m.team1)?.short} vs {tObj(m.team2)?.short} · #{m.id}{isDouble&&<span style={{fontSize:10,color:OR,marginLeft:6}}>Match {idx+1}</span>}</div>
                         <div style={{fontSize:10,color:"#555",marginTop:1}}>{m.date} · {dc}/{MEMBERS.length} predicted {lk?"🔒":"🔓"}</div>
                       </div>
                       <Ball name={m.team2} size={26}/>
@@ -801,7 +695,6 @@ export default function App(){
               })}
             </div>}
 
-            {/* Leaderboard */}
             {Object.keys(scores).length>0&&<div style={aCard}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:OR,letterSpacing:2,marginBottom:12}}>🏆 LEADERBOARD</div>
               {sorted.map((pl,i)=>(
@@ -819,7 +712,7 @@ export default function App(){
         </div>
       )}
 
-      {/* ══════════════ RESULTS ══════════════ */}
+      {/* ══ RESULTS ══ */}
       {screen===SCREENS.RESULTS&&who?.name===ADMIN_NAME&&adminMatch&&(
         <div style={{minHeight:"100vh",background:"#080810",color:"#fff",fontFamily:"Poppins,sans-serif",paddingBottom:40}}>
           <div style={{background:"rgba(255,255,255,0.04)",borderBottom:"1px solid rgba(255,165,0,0.2)",padding:"14px 20px",display:"flex",gap:12,alignItems:"center"}}>
@@ -844,14 +737,10 @@ export default function App(){
               <div style={{marginBottom:14}}><label style={aLbl}>⚡ {tObj(adminMatch.team1)?.short} Powerplay</label><PPRangeAdmin value={rForm.pp1} onChange={v=>setRForm(p=>({...p,pp1:v}))}/></div>
               <div style={{marginBottom:14}}><label style={aLbl}>⚡ {tObj(adminMatch.team2)?.short} Powerplay</label><PPRangeAdmin value={rForm.pp2} onChange={v=>setRForm(p=>({...p,pp2:v}))}/></div>
               {[{k:"topScorer",lb:"🏃 Top Run Scorer"},{k:"topWicket",lb:"🎳 Top Wicket Taker"},{k:"manOfMatch",lb:"⭐ Man of the Match"},{k:"sixHitter",lb:"💥 Most Sixes"}].map(f=>(
-                <div key={f.k} style={{marginBottom:14}}>
-                  <label style={aLbl}>{f.lb}</label>
-                  <PlayerPickerAdmin value={rForm[f.k]} onChange={v=>setRForm(p=>({...p,[f.k]:v}))}/>
-                </div>
+                <div key={f.k} style={{marginBottom:14}}><label style={aLbl}>{f.lb}</label><PlayerPickerAdmin value={rForm[f.k]} onChange={v=>setRForm(p=>({...p,[f.k]:v}))}/></div>
               ))}
               <button onClick={submitResults} style={{...aBtnMain,marginTop:4}}>🏆 SUBMIT & AWARD POINTS</button>
             </div>
-            {/* Predictions preview */}
             <div style={aCard}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:15,color:OR,letterSpacing:2,marginBottom:10}}>👁️ ALL PREDICTIONS</div>
               {MEMBERS.map(pl=>{
@@ -874,7 +763,7 @@ export default function App(){
         </div>
       )}
 
-      {/* ══════════════ COMPARE ══════════════ */}
+      {/* ══ COMPARE ══ */}
       {screen===SCREENS.COMPARE&&who?.name===ADMIN_NAME&&adminMatch&&(
         <div style={{minHeight:"100vh",background:"#080810",color:"#fff",fontFamily:"Poppins,sans-serif",paddingBottom:40}}>
           <div style={{background:"rgba(255,255,255,0.04)",borderBottom:"1px solid rgba(255,165,0,0.2)",padding:"14px 20px",display:"flex",gap:10,alignItems:"center",justifyContent:"space-between"}}>
@@ -883,17 +772,12 @@ export default function App(){
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:OR,letterSpacing:2}}>RESULTS</div>
             </div>
             <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>{window.open(`https://wa.me/?text=${encodeURIComponent(buildShareText(adminMatch.id))}`,"_blank");}}
-                style={{padding:"7px 12px",borderRadius:8,border:"none",background:WA_GREEN,color:"#fff",fontSize:12,fontFamily:"Poppins,sans-serif",fontWeight:700,cursor:"pointer"}}>
-                💬 WhatsApp
-              </button>
-              <button onClick={()=>{navigator.clipboard.writeText(buildShareText(adminMatch.id)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});}}
-                style={{padding:"7px 12px",borderRadius:8,border:"1px solid rgba(255,165,0,0.3)",background:"transparent",color:OR,fontSize:12,cursor:"pointer"}}>
-                {copied?"✅":"📋"}
-              </button>
+              <button onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(buildShareText(adminMatch.id))}`,"_blank")}
+                style={{padding:"7px 12px",borderRadius:8,border:"none",background:WA_GREEN,color:"#fff",fontSize:12,fontFamily:"Poppins,sans-serif",fontWeight:700,cursor:"pointer"}}>💬 WhatsApp</button>
+              <button onClick={()=>navigator.clipboard.writeText(buildShareText(adminMatch.id)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);})}
+                style={{padding:"7px 12px",borderRadius:8,border:"1px solid rgba(255,165,0,0.3)",background:"transparent",color:OR,fontSize:12,cursor:"pointer"}}>{copied?"✅":"📋"}</button>
             </div>
           </div>
-
           <div style={{maxWidth:520,margin:"0 auto",padding:"16px"}}>
             {(()=>{const r=results[adminMatch.id];if(!r)return null;return(
               <div style={{...aCard,background:"rgba(249,115,22,0.07)",border:"1px solid rgba(249,115,22,0.2)"}}>
@@ -916,15 +800,15 @@ export default function App(){
               const pts=calcPts(preds[`${adminMatch.id}_${pl.name}`]||{},results[adminMatch.id]);
               const p=preds[`${adminMatch.id}_${pl.name}`]||{};const r=results[adminMatch.id];
               const rows=r?[
-                {lb:"Toss",     me:tObj(p.toss)?.short||"—",  ac:tObj(r.tossWinner)?.short||"—",   ok:chkEq(p.toss,r.tossWinner)},
-                {lb:"Bat/Bowl", me:p.tossDecision||"—",        ac:r.tossDecision||"—",              ok:chkEq(p.tossDecision,r.tossDecision)},
-                {lb:"Winner",   me:tObj(p.winner)?.short||"—", ac:tObj(r.winner)?.short||"—",       ok:chkEq(p.winner,r.winner)},
+                {lb:"Toss",     me:tObj(p.toss)?.short||"—",  ac:tObj(r.tossWinner)?.short||"—",  ok:chkEq(p.toss,r.tossWinner)},
+                {lb:"Bat/Bowl", me:p.tossDecision||"—",        ac:r.tossDecision||"—",             ok:chkEq(p.tossDecision,r.tossDecision)},
+                {lb:"Winner",   me:tObj(p.winner)?.short||"—", ac:tObj(r.winner)?.short||"—",      ok:chkEq(p.winner,r.winner)},
                 {lb:`${tObj(adminMatch.team1)?.short} PP`,me:p.pp1||"—",ac:r.pp1||"—",ok:chkEq(p.pp1,r.pp1)},
                 {lb:`${tObj(adminMatch.team2)?.short} PP`,me:p.pp2||"—",ac:r.pp2||"—",ok:chkEq(p.pp2,r.pp2)},
-                {lb:"Scorer",   me:p.topScorer||"—",            ac:r.topScorer||"—",                ok:chkStr(p.topScorer,r.topScorer)},
-                {lb:"Wicket",   me:p.topWicket||"—",            ac:r.topWicket||"—",                ok:chkStr(p.topWicket,r.topWicket)},
-                {lb:"MOTM",     me:p.manOfMatch||"—",           ac:r.manOfMatch||"—",               ok:chkStr(p.manOfMatch,r.manOfMatch)},
-                {lb:"Sixes",    me:p.sixHitter||"—",            ac:r.sixHitter||"—",                ok:chkStr(p.sixHitter,r.sixHitter)},
+                {lb:"Scorer",   me:p.topScorer||"—",           ac:r.topScorer||"—",               ok:chkStr(p.topScorer,r.topScorer)},
+                {lb:"Wicket",   me:p.topWicket||"—",           ac:r.topWicket||"—",               ok:chkStr(p.topWicket,r.topWicket)},
+                {lb:"MOTM",     me:p.manOfMatch||"—",          ac:r.manOfMatch||"—",              ok:chkStr(p.manOfMatch,r.manOfMatch)},
+                {lb:"Sixes",    me:p.sixHitter||"—",           ac:r.sixHitter||"—",               ok:chkStr(p.sixHitter,r.sixHitter)},
               ]:[];
               return(
                 <div key={pl.name} style={{...aCard,padding:"14px",border:`1px solid ${pts>=14?"rgba(34,197,94,0.3)":pts>=9?"rgba(249,115,22,0.25)":"rgba(255,255,255,0.06)"}`,marginBottom:10}}>
@@ -963,7 +847,7 @@ export default function App(){
                   <span style={{fontSize:10,color:"#444"}}>pts</span>
                 </div>
               ))}
-              <button onClick={()=>{window.open(`https://wa.me/?text=${encodeURIComponent(buildShareText(adminMatch.id))}`,"_blank");}}
+              <button onClick={()=>window.open(`https://wa.me/?text=${encodeURIComponent(buildShareText(adminMatch.id))}`,"_blank")}
                 style={{width:"100%",marginTop:12,padding:"13px",borderRadius:12,border:"none",background:WA_GREEN,color:"#fff",fontSize:15,fontFamily:"Poppins,sans-serif",fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                 <span style={{fontSize:20}}>💬</span> Share Results on WhatsApp
               </button>
